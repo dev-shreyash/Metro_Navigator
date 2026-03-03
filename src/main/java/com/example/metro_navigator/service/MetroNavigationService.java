@@ -7,6 +7,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.PriorityQueue;
 
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 
 import com.example.metro_navigator.dto.RouteResponse;
@@ -16,6 +18,7 @@ import com.example.metro_navigator.repository.MetroEdgeRepository;
 import com.example.metro_navigator.repository.StationRepository;
 
 import lombok.RequiredArgsConstructor;
+
 
 @Service
 @RequiredArgsConstructor
@@ -40,6 +43,7 @@ public class MetroNavigationService {
         }
     }
 
+    @Cacheable(value = "routes", key = "#sourceName.concat('-').concat(#destName)")
     public RouteResponse calculateFastestRoute(String sourceName, String destName) {
         Station start = stationRepo.findByName(sourceName)
                 .orElseThrow(() -> new RuntimeException("Source station not found: " + sourceName));
@@ -122,5 +126,16 @@ public class MetroNavigationService {
                 .fareRs(fare)
                 .routePath(path)
                 .build();
+    }
+
+    @CacheEvict(value = "routes", allEntries = true)
+    public void updateEdgeData(MetroEdge updatedEdge) {
+        edgeRepo.save(updatedEdge);
+        System.out.println("Graph updated. Routes cache evicted.");
+    }
+    
+    @CacheEvict(value = "routes", allEntries = true)
+    public void invalidateGraph() {
+       System.out.println("Manual cache clear executed.");
     }
 }
