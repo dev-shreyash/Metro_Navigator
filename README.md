@@ -71,14 +71,18 @@ Calculates the best route between a source and destination station.
 
 **Endpoint:** `GET /api/v1/metro/route`
 
-**Query Parameters:**
-
-* `source` (String): Starting station name.
-* `destination` (String): Ending station name.
+**Request Body (JSON):**
+```json
+{
+  "source": "String",
+  "destination": "String"
+}
+```
+- `source` (String): Starting station name  
+- `destination` (String): Ending station name  
 
 **Example Request:**
-`GET http://localhost:8080/api/v1/metro/route?source=Versova&destination=Dadar`
-
+POST http://localhost:8080/api/v1/metro/route
 **Example Response:**
 
 ```json
