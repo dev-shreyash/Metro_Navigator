@@ -83,21 +83,34 @@ Calculates the best route between a source and destination station.
 
 ```json
 {
-  "source": "Versova",
-  "destination": "Dadar",
-  "stops": 4,
-  "totalDistanceKm": 12.2,
-  "estimatedTimeMins": 30.0,
-  "fareRs": 35,
-  "routePath": [
-    "Versova",
-    "DN Nagar",
-    "Andheri",
-    "BKC",
-    "Dadar"
-  ]
+    "destination": "Dadar",
+    "estimatedTimeMins": 42.0,
+    "fareRs": 48,
+    "project": "Metro Navigator",
+    "routePath": [
+        "Versova",
+        "DN Nagar",
+        "Azad Nagar",
+        "Andheri",
+        "Western Express Highway",
+        "Chakala JB Nagar",
+        "Airport Road",
+        "Marol Naka",
+        "Marol Naka",
+        "Sahar Road",
+        "Airport T2",
+        "Santacruz",
+        "CSMIA T1",
+        "Bandra Colony",
+        "BKC",
+        "Dharavi",
+        "Shitala Devi",
+        "Dadar"
+    ],
+    "source": "Versova",
+    "stops": 17,
+    "totalDistanceKm": 18.89
 }
-
 ```
 
 ## Next Steps / Future Scope
