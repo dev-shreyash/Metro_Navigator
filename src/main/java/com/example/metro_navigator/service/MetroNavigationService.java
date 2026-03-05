@@ -17,8 +17,8 @@ import com.example.metro_navigator.entity.Station;
 import com.example.metro_navigator.repository.MetroEdgeRepository;
 import com.example.metro_navigator.repository.StationRepository;
 
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
-
 
 @Service
 @RequiredArgsConstructor
@@ -27,13 +27,46 @@ public class MetroNavigationService {
     private final StationRepository stationRepo;
     private final MetroEdgeRepository edgeRepo;
 
-    // Helper class for the PriorityQueue
+    // --- IN-MEMORY CACHE ---
+    private final Map<Long, List<MetroEdge>> adjacencyList = new HashMap<>();
+    private final Map<String, List<Station>> stationsByName = new HashMap<>();
+    private final Map<Long, Station> stationById = new HashMap<>();
+    private List<Station> allStations = new ArrayList<>();
+
+    // 1. The Engine Start: Build the graph ONCE when Spring Boot boots up
+    @PostConstruct
+    public void initGraph() {
+        System.out.println("Building in-memory Metro Graph...");
+        adjacencyList.clear();
+        stationsByName.clear();
+        stationById.clear();
+
+        allStations = stationRepo.findAll();
+        for (Station s : allStations) {
+            // This handles Interchanges! The same name will naturally map to TWO stations in this list.
+            stationsByName.computeIfAbsent(s.getName(), k -> new ArrayList<>()).add(s);
+            stationById.put(s.getId(), s);
+            adjacencyList.put(s.getId(), new ArrayList<>());
+        }
+
+        List<MetroEdge> allEdges = edgeRepo.findAllWithStations();
+        for (MetroEdge edge : allEdges) {
+            adjacencyList.get(edge.getSource().getId()).add(edge);
+
+            // Add reverse edge for undirected graph
+            MetroEdge reverseEdge = new MetroEdge(null, edge.getDestination(), edge.getSource(), edge.getDistance(), edge.getTime());
+            adjacencyList.get(edge.getDestination().getId()).add(reverseEdge);
+        }
+        System.out.println("Metro Graph loaded into RAM successfully!");
+    }
+
     private static class NodeRecord implements Comparable<NodeRecord> {
-        Station station;
+
+        Long stationId;
         double distance;
 
-        NodeRecord(Station station, double distance) {
-            this.station = station;
+        NodeRecord(Long stationId, double distance) {
+            this.stationId = stationId;
             this.distance = distance;
         }
 
@@ -43,79 +76,82 @@ public class MetroNavigationService {
         }
     }
 
+    // 2. The Core Logic: Zero Database Calls inside this method
     @Cacheable(value = "routes", key = "#sourceName.concat('-').concat(#destName)")
     public RouteResponse calculateFastestRoute(String sourceName, String destName) {
-        Station start = stationRepo.findByName(sourceName)
-                .orElseThrow(() -> new RuntimeException("Source station not found: " + sourceName));
-        Station end = stationRepo.findByName(destName)
-                .orElseThrow(() -> new RuntimeException("Destination station not found: " + destName));
+        List<Station> startNodes = stationsByName.get(sourceName);
+        List<Station> endNodes = stationsByName.get(destName);
 
-        // 1. Build Adjacency List from Database
-        List<MetroEdge> allEdges = edgeRepo.findAll();
-        Map<Station, List<MetroEdge>> graph = new HashMap<>();
-        
-        for (MetroEdge edge : allEdges) {
-            graph.computeIfAbsent(edge.getSource(), k -> new ArrayList<>()).add(edge);
-            MetroEdge reverseEdge = new MetroEdge(null, edge.getDestination(), edge.getSource(), edge.getDistance(), edge.getTime());
-            graph.computeIfAbsent(edge.getDestination(), k -> new ArrayList<>()).add(reverseEdge);
+        if (startNodes == null || startNodes.isEmpty()) {
+            throw new RuntimeException("Source station not found: " + sourceName);
+        }
+        if (endNodes == null || endNodes.isEmpty()) {
+            throw new RuntimeException("Destination station not found: " + destName);
         }
 
-        // 2. Dijkstra's Initialization
         PriorityQueue<NodeRecord> pq = new PriorityQueue<>();
-        Map<Station, Double> minDistance = new HashMap<>();
-        Map<Station, Station> parentMap = new HashMap<>();
-        Map<Station, Double> travelTime = new HashMap<>();
+        Map<Long, Double> minDistance = new HashMap<>();
+        Map<Long, Long> parentMap = new HashMap<>();
+        Map<Long, Double> travelTime = new HashMap<>();
 
-        for (Station s : stationRepo.findAll()) {
-            minDistance.put(s, Double.MAX_VALUE);
+        for (Station s : allStations) {
+            minDistance.put(s.getId(), Double.MAX_VALUE);
         }
 
-        minDistance.put(start, 0.0);
-        travelTime.put(start, 0.0);
-        pq.add(new NodeRecord(start, 0.0));
+        // Initialize ALL valid start nodes (Crucial for Interchanges)
+        for (Station startNode : startNodes) {
+            minDistance.put(startNode.getId(), 0.0);
+            travelTime.put(startNode.getId(), 0.0);
+            pq.add(new NodeRecord(startNode.getId(), 0.0));
+        }
 
-        // 3. Process the Graph
+        Long finalDestinationId = null;
+
         while (!pq.isEmpty()) {
             NodeRecord currentRecord = pq.poll();
-            Station current = currentRecord.station;
+            Long currentId = currentRecord.stationId;
 
-            if (current.equals(end)) break; // Found the destination
+            // Check if the current node is ONE OF the valid destination nodes
+            if (endNodes.stream().anyMatch(endNode -> endNode.getId().equals(currentId))) {
+                finalDestinationId = currentId;
+                break;
+            }
 
-            if (currentRecord.distance > minDistance.get(current)) continue;
+            if (currentRecord.distance > minDistance.get(currentId)) {
+                continue;
+            }
 
-            List<MetroEdge> neighbors = graph.getOrDefault(current, new ArrayList<>());
-            for (MetroEdge edge : neighbors) {
-                Station neighbor = edge.getDestination();
-                double newDist = minDistance.get(current) + edge.getDistance();
+            for (MetroEdge edge : adjacencyList.get(currentId)) {
+                Long neighborId = edge.getDestination().getId();
+                double newDist = minDistance.get(currentId) + edge.getDistance();
 
-                if (newDist < minDistance.get(neighbor)) {
-                    minDistance.put(neighbor, newDist);
-                    parentMap.put(neighbor, current);
-                    travelTime.put(neighbor, travelTime.get(current) + edge.getTime());
-                    pq.add(new NodeRecord(neighbor, newDist));
+                if (newDist < minDistance.get(neighborId)) {
+                    minDistance.put(neighborId, newDist);
+                    parentMap.put(neighborId, currentId);
+                    travelTime.put(neighborId, travelTime.getOrDefault(currentId, 0.0) + edge.getTime());
+                    pq.add(new NodeRecord(neighborId, newDist));
                 }
             }
         }
 
-        // 4. Reconstruct the Path
-        return buildResponse(start, end, parentMap, minDistance.get(end), travelTime.get(end));
-    }
-
-    private RouteResponse buildResponse(Station start, Station end, Map<Station, Station> parentMap, double totalDist, double totalTime) {
-        LinkedList<String> path = new LinkedList<>();
-        Station curr = end;
-
-        while (curr != null) {
-            path.addFirst(curr.getName());
-            curr = parentMap.get(curr);
-        }
-
-        if (path.size() == 1 && !start.equals(end)) {
+        if (finalDestinationId == null) {
             throw new RuntimeException("No route exists between these stations.");
         }
 
+        return buildResponse(startNodes.get(0), stationById.get(finalDestinationId), parentMap, minDistance.get(finalDestinationId), travelTime.get(finalDestinationId));
+    }
+
+    private RouteResponse buildResponse(Station start, Station end, Map<Long, Long> parentMap, double totalDist, double totalTime) {
+        LinkedList<String> path = new LinkedList<>();
+        Long currId = end.getId();
+
+        while (currId != null) {
+            path.addFirst(stationById.get(currId).getName());
+            currId = parentMap.get(currId);
+        }
+
         int stops = path.size() - 1;
-        int fare = (int) Math.ceil(10 + (2 * totalDist)); // Base Rs 10 + Rs 2 per km
+        int fare = (int) Math.ceil(10 + (2 * totalDist));
 
         return RouteResponse.builder()
                 .source(start.getName())
@@ -131,11 +167,8 @@ public class MetroNavigationService {
     @CacheEvict(value = "routes", allEntries = true)
     public void updateEdgeData(MetroEdge updatedEdge) {
         edgeRepo.save(updatedEdge);
-        System.out.println("Graph updated. Routes cache evicted.");
-    }
-    
-    @CacheEvict(value = "routes", allEntries = true)
-    public void invalidateGraph() {
-       System.out.println("Manual cache clear executed.");
+        // We MUST rebuild the in-memory graph if the DB changes!
+        initGraph();
+        System.out.println("Database updated. Graph rebuilt and cache evicted.");
     }
 }

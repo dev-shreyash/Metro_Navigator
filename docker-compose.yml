@@ -1,0 +1,18 @@
+
+
+services:
+  metro-api:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      # Use the host machine for MySQL!
+      - SPRING_DATASOURCE_URL=jdbc:mysql://host.docker.internal:3306/metro_db
+      - SPRING_DATASOURCE_USERNAME=root
+      - SPRING_DATASOURCE_PASSWORD=
+    deploy:
+      resources:
+        limits:
+          # Throttle to exactly 2 CPU cores and 1GB of RAM
+          cpus: '2.0'
+          memory: 1G
